@@ -127,7 +127,7 @@ export const INITIAL_RULES: AutoReplyRule[] = [
     name: '微信号/联系方式风险防范',
     accountId: 'all',
     matchType: 'regex',
-    keywords: ['(?i)(v|vx|wx|微信|电话|加微|私聊|qq|扣扣)[:：]?\\s*[a-zA-Z0-9_-]{5,}'],
+    keywords: ['(v|vx|wx|微信|电话|加微|私聊|qq|扣扣)[:：]?\\s*[a-zA-Z0-9_-]{5,}'],
     replyContent: '平台严禁脱离闲鱼交易！为保障您的资金安全，所有咨询、售后及商品发货均在闲鱼平台内完成，请勿发送联系方式避免被系统检测封号哦~ 🛡️',
     randomDelayMin: 1,
     randomDelayMax: 2,

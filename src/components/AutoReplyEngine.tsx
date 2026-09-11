@@ -193,7 +193,8 @@ export const AutoReplyEngine: React.FC<Props> = ({
       if (rule.matchType === 'regex') {
         const hit = rule.keywords.some((pat) => {
           try {
-            return new RegExp(pat, 'i').test(sandboxMessage);
+            const cleanPat = pat.replace(/^\(\?[imsux]+\)/, '');
+            return new RegExp(cleanPat, 'i').test(sandboxMessage);
           } catch {
             return false;
           }

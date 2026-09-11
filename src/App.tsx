@@ -32,6 +32,7 @@ import { RiskControlCenter } from './components/RiskControlCenter';
 import { TechnicalSpecsModal } from './components/TechnicalSpecsModal';
 import { ElectronPackagerModal } from './components/ElectronPackagerModal';
 import { AddAccountModal } from './components/AddAccountModal';
+import { ProductionDeploymentModal } from './components/ProductionDeploymentModal';
 
 export default function App() {
   // Navigation State
@@ -92,6 +93,106 @@ export default function App() {
   const [showSpecsModal, setShowSpecsModal] = useState<boolean>(false);
   const [showPackagerModal, setShowPackagerModal] = useState<boolean>(false);
   const [showAddAccountModal, setShowAddAccountModal] = useState<boolean>(false);
+  const [showProductionModal, setShowProductionModal] = useState<boolean>(false);
+
+  // Sync rules with full-stack backend
+  useEffect(() => {
+    fetch('/api/production/sync-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rules, globalBotActive }),
+    }).catch(() => {});
+  }, [rules, globalBotActive]);
+
+  // Sync accounts with backend worker manager
+  useEffect(() => {
+    for (const acc of accounts) {
+      if (acc.cookies && acc.cookies.length > 20) {
+        fetch('/api/production/account/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: acc.id,
+            nickname: acc.nickname,
+            cookie: acc.cookies,
+            autoStart: acc.status === 'online',
+          }),
+        }).catch(() => {});
+      }
+    }
+  }, [accounts]);
+
+  // Poll real messages from backend Mtop worker
+  useEffect(() => {
+    const pollRealMessages = async () => {
+      try {
+        const res = await fetch('/api/production/messages');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.messages && data.messages.length > 0) {
+            for (const rm of data.messages) {
+              setMessages((prev) => {
+                const convMsgs = prev[rm.conversationId] || [];
+                if (convMsgs.some((m) => m.id === rm.id)) return prev;
+                return {
+                  ...prev,
+                  [rm.conversationId]: [
+                    ...convMsgs,
+                    {
+                      id: rm.id,
+                      conversationId: rm.conversationId,
+                      sender: rm.sender,
+                      type: 'text',
+                      content: rm.content,
+                      timestamp: rm.timestamp,
+                      status: rm.status,
+                      isAutoReplied: !!rm.matchedRuleName,
+                      matchedRuleName: rm.matchedRuleName,
+                    },
+                  ],
+                };
+              });
+
+              setConversations((prev) => {
+                const exists = prev.find((c) => c.id === rm.conversationId);
+                if (exists) {
+                  return prev.map((c) =>
+                    c.id === rm.conversationId
+                      ? {
+                          ...c,
+                          lastMessage: rm.content.slice(0, 35),
+                          lastMessageTime: rm.timestamp.slice(0, 5),
+                          unreadCount: rm.sender === 'buyer' ? c.unreadCount + 1 : 0,
+                        }
+                      : c
+                  );
+                } else {
+                  return [
+                    {
+                      id: rm.conversationId,
+                      accountId: rm.accountId,
+                      buyerUid: rm.buyerUid,
+                      buyerNickname: rm.buyerNickname || '闲鱼买家',
+                      buyerAvatar:
+                        'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+                      lastMessage: rm.content.slice(0, 35),
+                      lastMessageTime: rm.timestamp.slice(0, 5),
+                      unreadCount: 1,
+                      isAutoReplyActive: true,
+                    },
+                    ...prev,
+                  ];
+                }
+              });
+            }
+          }
+        }
+      } catch {}
+    };
+
+    const timer = setInterval(pollRealMessages, 3500);
+    return () => clearInterval(timer);
+  }, []);
 
   // Save to localStorage
   useEffect(() => {
@@ -133,6 +234,20 @@ export default function App() {
 
   const handleAddAccount = (newAcc: XianYuAccount) => {
     setAccounts((prev) => [newAcc, ...prev]);
+    setActiveAccountId(newAcc.id);
+
+    // Automatically seed an incoming test consultation from Buyer B to this new store account!
+    handleCreateInboundConversation(
+      newAcc.id,
+      '闲鱼买家B (在线咨询)',
+      '在吗？请问这个怎么发货？拍下多久能到？',
+      {
+        itemId: 'item_general',
+        itemTitle: `【${newAcc.nickname}】自动发货数字商品/会员权益`,
+        itemPrice: 88.0,
+        itemCover: 'https://images.unsplash.com/photo-1612287233207-6b4d32f7e774?w=200&auto=format&fit=crop&q=80',
+      }
+    );
   };
 
   const handleDeleteAccount = (id: string) => {
@@ -252,7 +367,109 @@ export default function App() {
     );
   };
 
-  // Simulate Buyer Inbound Message (runs auto-reply engine & auto delivery check!)
+  // Reusable Auto-Reply Engine Execution Core
+  const runAutoReply = (conv: Conversation, text: string) => {
+    if (!globalBotActive || !conv.isAutoReplyActive) return;
+
+    // Find matching rule
+    const sortedRules = [...rules].sort((a, b) => b.priority - a.priority);
+    let matchedRule: AutoReplyRule | null = null;
+
+    for (const r of sortedRules) {
+      if (!r.enabled) continue;
+      if (r.accountId !== 'all' && r.accountId !== conv.accountId) continue;
+
+      if (r.matchType === 'item_specific' && conv.currentTrade?.itemId === r.targetItemId) {
+        if (r.keywords.some((k) => text.includes(k))) {
+          matchedRule = r;
+          break;
+        }
+      } else if (r.matchType === 'exact' && r.keywords.some((k) => k.trim() === text.trim())) {
+        matchedRule = r;
+        break;
+      } else if (r.matchType === 'contains' && r.keywords.some((k) => text.includes(k))) {
+        matchedRule = r;
+        break;
+      } else if (r.matchType === 'regex') {
+        const hit = r.keywords.some((pat) => {
+          try {
+            const cleanPat = pat.replace(/^\(\?[imsux]+\)/, '');
+            return new RegExp(cleanPat, 'i').test(text);
+          } catch {
+            return false;
+          }
+        });
+        if (hit) {
+          matchedRule = r;
+          break;
+        }
+      }
+    }
+
+    // Default fallback rule if none matched
+    if (!matchedRule) {
+      matchedRule = sortedRules.find((r) => r.matchType === 'default' && r.enabled) || null;
+    }
+
+    if (matchedRule) {
+      const minDelay = Math.max(1, matchedRule.randomDelayMin || 1);
+      const maxDelay = Math.max(minDelay, matchedRule.randomDelayMax || 2);
+      const delaySeconds = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
+
+      // Dynamic slot replace
+      const replyText = matchedRule.replyContent
+        .replace(/{buyer_name}/g, conv.buyerNickname)
+        .replace(/{item_title}/g, conv.currentTrade?.itemTitle || '闲鱼商品')
+        .replace(/{order_id}/g, conv.currentTrade?.orderId || 'TB' + Date.now())
+        .replace(/{time}/g, new Date().toLocaleTimeString());
+
+      setTimeout(() => {
+        const autoMsg: ChatMessage = {
+          id: `automsg_${Date.now()}`,
+          conversationId: conv.id,
+          sender: 'user',
+          type: 'text',
+          content: replyText,
+          timestamp: new Date().toLocaleTimeString(),
+          isAutoReplied: true,
+          matchedRuleName: matchedRule?.name,
+          status: 'sent',
+        };
+
+        setMessages((prev) => ({
+          ...prev,
+          [conv.id]: [...(prev[conv.id] || []), autoMsg],
+        }));
+
+        // Also update conversation's last message on auto-reply
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === conv.id
+              ? {
+                  ...c,
+                  lastMessage: replyText.slice(0, 35) + (replyText.length > 35 ? '...' : ''),
+                  lastMessageTime: new Date().toLocaleTimeString().slice(0, 5),
+                }
+              : c
+          )
+        );
+
+        // Increment rule hit count
+        setRules((prev) =>
+          prev.map((r) => (r.id === matchedRule?.id ? { ...r, hitCount: r.hitCount + 1 } : r))
+        );
+
+        // Increment account todayReplies count
+        setAccounts((prev) =>
+          prev.map((a) =>
+            a.id === conv.accountId ? { ...a, todayReplies: a.todayReplies + 1 } : a
+          )
+        );
+      }, delaySeconds * 1000);
+    }
+  };
+
+  // Simulate Buyer Inbound Message on existing conversation
   const handleSimulateBuyerMessage = (conversationId: string, text: string) => {
     const conv = conversations.find((c) => c.id === conversationId);
     if (!conv) return;
@@ -277,102 +494,65 @@ export default function App() {
         c.id === conversationId
           ? {
               ...c,
-              lastMessage: text,
+              lastMessage: text.slice(0, 35) + (text.length > 35 ? '...' : ''),
               lastMessageTime: new Date().toLocaleTimeString().slice(0, 5),
             }
           : c
       )
     );
 
-    // If global bot active and conversation auto reply enabled
-    if (globalBotActive && conv.isAutoReplyActive) {
-      // Find matching rule
-      const sortedRules = [...rules].sort((a, b) => b.priority - a.priority);
-      let matchedRule: AutoReplyRule | null = null;
+    runAutoReply(conv, text);
+  };
 
-      for (const r of sortedRules) {
-        if (!r.enabled) continue;
-        if (r.accountId !== 'all' && r.accountId !== conv.accountId) continue;
+  // Create Brand New Inbound Buyer Conversation (e.g. Buyer B chatting with Store A)
+  const handleCreateInboundConversation = (
+    accountId: string,
+    buyerNickname: string,
+    text: string,
+    itemInfo?: { itemId?: string; itemTitle?: string; itemPrice?: number; itemCover?: string }
+  ) => {
+    const convId = `conv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const buyerUid = `buyer_${Math.floor(10000 + Math.random() * 90000)}`;
 
-        if (r.matchType === 'item_specific' && conv.currentTrade?.itemId === r.targetItemId) {
-          if (r.keywords.some((k) => text.includes(k))) {
-            matchedRule = r;
-            break;
-          }
-        } else if (r.matchType === 'exact' && r.keywords.some((k) => k.trim() === text.trim())) {
-          matchedRule = r;
-          break;
-        } else if (r.matchType === 'contains' && r.keywords.some((k) => text.includes(k))) {
-          matchedRule = r;
-          break;
-        } else if (r.matchType === 'regex') {
-          const hit = r.keywords.some((pat) => {
-            try {
-              return new RegExp(pat, 'i').test(text);
-            } catch {
-              return false;
-            }
-          });
-          if (hit) {
-            matchedRule = r;
-            break;
-          }
-        }
-      }
+    const newConv: Conversation = {
+      id: convId,
+      accountId,
+      buyerUid,
+      buyerNickname: buyerNickname.trim() || '闲鱼买家B (在线咨询)',
+      buyerAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+      lastMessage: text.slice(0, 35) + (text.length > 35 ? '...' : ''),
+      lastMessageTime: new Date().toLocaleTimeString().slice(0, 5),
+      unreadCount: 1,
+      isAutoReplyActive: true,
+      currentTrade: {
+        itemId: itemInfo?.itemId || 'item_switch_vip',
+        itemTitle: itemInfo?.itemTitle || '【任天堂Switch 12个月会员兑换码】拍下自动发货',
+        itemPrice: itemInfo?.itemPrice || 99.0,
+        itemCover: itemInfo?.itemCover || 'https://images.unsplash.com/photo-1612287233207-6b4d32f7e774?w=200&auto=format&fit=crop&q=80',
+        status: 'consulting',
+      },
+    };
 
-      // Default fallback rule if none matched
-      if (!matchedRule) {
-        matchedRule = sortedRules.find((r) => r.matchType === 'default' && r.enabled) || null;
-      }
+    const initialBuyerMsg: ChatMessage = {
+      id: `bmsg_${Date.now()}`,
+      conversationId: convId,
+      sender: 'buyer',
+      type: 'text',
+      content: text,
+      timestamp: new Date().toLocaleTimeString(),
+      status: 'received',
+    };
 
-      if (matchedRule) {
-        const delaySeconds = Math.max(
-          1,
-          Math.floor(
-            Math.random() * (matchedRule.randomDelayMax - matchedRule.randomDelayMin) +
-              matchedRule.randomDelayMin
-          )
-        );
+    setConversations((prev) => [newConv, ...prev]);
+    setMessages((prev) => ({
+      ...prev,
+      [convId]: [initialBuyerMsg],
+    }));
 
-        // Dynamic slot replace
-        const replyText = matchedRule.replyContent
-          .replace(/{buyer_name}/g, conv.buyerNickname)
-          .replace(/{item_title}/g, conv.currentTrade?.itemTitle || '闲鱼商品')
-          .replace(/{order_id}/g, conv.currentTrade?.orderId || 'TB' + Date.now())
-          .replace(/{time}/g, new Date().toLocaleTimeString());
+    // Trigger auto-reply right away
+    runAutoReply(newConv, text);
 
-        setTimeout(() => {
-          const autoMsg: ChatMessage = {
-            id: `automsg_${Date.now()}`,
-            conversationId,
-            sender: 'user',
-            type: 'text',
-            content: replyText,
-            timestamp: new Date().toLocaleTimeString(),
-            isAutoReplied: true,
-            matchedRuleName: matchedRule?.name,
-            status: 'sent',
-          };
-
-          setMessages((prev) => ({
-            ...prev,
-            [conversationId]: [...(prev[conversationId] || []), autoMsg],
-          }));
-
-          // Increment rule hit count
-          setRules((prev) =>
-            prev.map((r) => (r.id === matchedRule?.id ? { ...r, hitCount: r.hitCount + 1 } : r))
-          );
-
-          // Increment account todayReplies count
-          setAccounts((prev) =>
-            prev.map((a) =>
-              a.id === conv.accountId ? { ...a, todayReplies: a.todayReplies + 1 } : a
-            )
-          );
-        }, delaySeconds * 1000);
-      }
-    }
+    return convId;
   };
 
   // Toggle Conversation Auto-Reply
@@ -405,6 +585,7 @@ export default function App() {
         onOpenSpecs={() => setShowSpecsModal(true)}
         onOpenPackager={() => setShowPackagerModal(true)}
         onOpenAddAccount={() => setShowAddAccountModal(true)}
+        onOpenProduction={() => setShowProductionModal(true)}
       />
 
       {/* 2. Main Body: Sidebar + Dynamic Workspace */}
@@ -442,6 +623,7 @@ export default function App() {
               onAddAccount={handleAddAccount}
               onDeleteAccount={handleDeleteAccount}
               onOpenAddAccount={() => setShowAddAccountModal(true)}
+              onOpenProduction={() => setShowProductionModal(true)}
             />
           )}
 
@@ -481,6 +663,7 @@ export default function App() {
               onSendMessage={handleSendMessage}
               onToggleConversationAutoReply={handleToggleConversationAutoReply}
               onSimulateBuyerMessage={handleSimulateBuyerMessage}
+              onCreateInboundConversation={handleCreateInboundConversation}
             />
           )}
 
@@ -514,6 +697,13 @@ export default function App() {
           handleAddAccount(newAcc);
           setActiveAccountId(newAcc.id);
         }}
+      />
+
+      <ProductionDeploymentModal
+        isOpen={showProductionModal}
+        onClose={() => setShowProductionModal(false)}
+        accounts={accounts}
+        activeAccountId={activeAccountId}
       />
     </div>
   );

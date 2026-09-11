@@ -24,6 +24,7 @@ interface Props {
   onOpenSpecs: () => void;
   onOpenPackager: () => void;
   onOpenAddAccount?: () => void;
+  onOpenProduction?: () => void;
 }
 
 export const DesktopHeader: React.FC<Props> = ({
@@ -37,6 +38,7 @@ export const DesktopHeader: React.FC<Props> = ({
   onOpenSpecs,
   onOpenPackager,
   onOpenAddAccount,
+  onOpenProduction,
 }) => {
   const activeAccount = accounts.find((a) => a.id === activeAccountId) || accounts[0];
 
@@ -126,6 +128,17 @@ export const DesktopHeader: React.FC<Props> = ({
 
       {/* Right: Technical reference + Packager + Windows-like Window Controls */}
       <div className="flex items-center gap-2 shrink-0">
+        {onOpenProduction && (
+          <button
+            onClick={onOpenProduction}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 transition-all shadow-md shadow-amber-500/25 shrink-0 active:scale-95"
+            title="查看真机测试、真实 Cookie 连通性测试与 VPS 独立部署包"
+          >
+            <Radio className="w-3.5 h-3.5 animate-pulse" />
+            <span>生产落地实战</span>
+          </button>
+        )}
+
         <button
           onClick={onOpenSpecs}
           className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-amber-400 transition-colors whitespace-nowrap shrink-0"

@@ -16,6 +16,9 @@ import {
   ExternalLink,
   ChevronRight,
   Sparkles,
+  X,
+  Play,
+  Plus,
 } from 'lucide-react';
 import {
   Conversation,
@@ -35,6 +38,12 @@ interface Props {
   onSendMessage: (conversationId: string, text: string, type?: 'text' | 'card') => void;
   onToggleConversationAutoReply: (conversationId: string, active: boolean) => void;
   onSimulateBuyerMessage: (conversationId: string, text: string) => void;
+  onCreateInboundConversation?: (
+    accountId: string,
+    buyerNickname: string,
+    text: string,
+    itemInfo?: { itemId?: string; itemTitle?: string; itemPrice?: number; itemCover?: string }
+  ) => string;
 }
 
 export const ChatWorkbench: React.FC<Props> = ({
@@ -47,11 +56,21 @@ export const ChatWorkbench: React.FC<Props> = ({
   onSendMessage,
   onToggleConversationAutoReply,
   onSimulateBuyerMessage,
+  onCreateInboundConversation,
 }) => {
   const [selectedConvId, setSelectedConvId] = useState<string>(conversations[0]?.id || '');
   const [inputText, setInputText] = useState('');
   const [searchBuyer, setSearchBuyer] = useState('');
   const [filterAccount, setFilterAccount] = useState<string>('all');
+  const [showSimulateModal, setShowSimulateModal] = useState(false);
+  const [simulateInput, setSimulateInput] = useState('在吗？请问兑换码怎么发货？');
+
+  // Modal for new buyer B inbound consultation
+  const [showNewInboundModal, setShowNewInboundModal] = useState(false);
+  const [inboundAccountId, setInboundAccountId] = useState<string>(accounts[0]?.id || '');
+  const [inboundBuyerName, setInboundBuyerName] = useState('闲鱼买家B (在线咨询)');
+  const [inboundItemTitle, setInboundItemTitle] = useState('【任天堂Switch 12个月会员兑换码】拍下自动发货');
+  const [inboundMessage, setInboundMessage] = useState('在吗？请问兑换码怎么发货？');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Quick reply shortcuts
@@ -168,59 +187,100 @@ export const ChatWorkbench: React.FC<Props> = ({
               className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 focus:outline-hidden focus:border-amber-500"
             />
           </div>
+
+          {/* Simulate Buyer B Inbound Button */}
+          <button
+            onClick={() => {
+              setInboundAccountId(filterAccount !== 'all' ? filterAccount : accounts[0]?.id || '');
+              setShowNewInboundModal(true);
+            }}
+            className="w-full h-8 px-2 bg-gradient-to-r from-amber-500/20 to-amber-500/10 hover:from-amber-500/30 hover:to-amber-500/20 text-amber-300 hover:text-amber-200 border border-amber-500/35 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-xs"
+            title="让买家B向指定店铺账号(如新接入的账号A)发起进线咨询，测试自动回复"
+          >
+            <Plus className="w-3.5 h-3.5 text-amber-400" />
+            <span>模拟买家B进线咨询 (测试A账号)</span>
+          </button>
         </div>
 
         {/* Conversation List Items */}
         <div className="flex-1 overflow-y-auto divide-y divide-slate-900">
-          {filteredConversations.map((conv) => {
-            const isSelected = conv.id === selectedConvId;
-            const ownerAcc = accounts.find((a) => a.id === conv.accountId);
-
-            return (
-              <div
-                key={conv.id}
-                onClick={() => setSelectedConvId(conv.id)}
-                className={`p-3 cursor-pointer transition-colors flex items-start gap-3 relative ${
-                  isSelected ? 'bg-slate-900 border-l-4 border-amber-400' : 'hover:bg-slate-900/60'
-                }`}
+          {filteredConversations.length === 0 ? (
+            <div className="p-5 text-center space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto text-slate-500">
+                <MessageCircle className="w-5 h-5 text-amber-400/80" />
+              </div>
+              <div className="space-y-1">
+                <p className="font-bold text-xs text-white">
+                  {filterAccount !== 'all'
+                    ? `【${accounts.find((a) => a.id === filterAccount)?.nickname || '该店铺'}】暂无咨询`
+                    : '暂无符合条件的会话'}
+                </p>
+                <p className="text-[11px] text-slate-400 leading-relaxed max-w-[200px] mx-auto">
+                  该账号尚未有买家进线。点击下方按钮即可让买家B向该店铺发送首条咨询，并立即测试自动回复！
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setInboundAccountId(filterAccount !== 'all' ? filterAccount : accounts[0]?.id || '');
+                  setShowNewInboundModal(true);
+                }}
+                className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs transition-all shadow-md shadow-amber-500/20 inline-flex items-center gap-1"
               >
-                <div className="relative shrink-0">
-                  <img
-                    src={conv.buyerAvatar}
-                    alt={conv.buyerNickname}
-                    className="w-10 h-10 rounded-full object-cover border border-slate-800"
-                  />
-                  {conv.unreadCount > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center animate-pulse">
-                      {conv.unreadCount}
-                    </span>
-                  )}
-                </div>
+                <Plus className="w-3.5 h-3.5" />
+                <span>立即模拟买家B进线</span>
+              </button>
+            </div>
+          ) : (
+            filteredConversations.map((conv) => {
+              const isSelected = conv.id === selectedConvId;
+              const ownerAcc = accounts.find((a) => a.id === conv.accountId);
 
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-0.5">
-                    <span className="font-semibold text-xs text-white truncate">
-                      {conv.buyerNickname}
-                    </span>
-                    <span className="text-[10px] text-slate-500 font-mono">{conv.lastMessageTime}</span>
-                  </div>
-
-                  <p className="text-[11px] text-slate-400 truncate mb-1">{conv.lastMessage}</p>
-
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-slate-500 truncate max-w-[120px]">
-                      {ownerAcc?.nickname}
-                    </span>
-                    {conv.isAutoReplyActive ? (
-                      <span className="text-emerald-400 font-medium">● 机器人托管</span>
-                    ) : (
-                      <span className="text-amber-400 font-medium">▲ 人工接管中</span>
+              return (
+                <div
+                  key={conv.id}
+                  onClick={() => setSelectedConvId(conv.id)}
+                  className={`p-3 cursor-pointer transition-colors flex items-start gap-3 relative ${
+                    isSelected ? 'bg-slate-900 border-l-4 border-amber-400' : 'hover:bg-slate-900/60'
+                  }`}
+                >
+                  <div className="relative shrink-0">
+                    <img
+                      src={conv.buyerAvatar}
+                      alt={conv.buyerNickname}
+                      className="w-10 h-10 rounded-full object-cover border border-slate-800"
+                    />
+                    {conv.unreadCount > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center animate-pulse">
+                        {conv.unreadCount}
+                      </span>
                     )}
                   </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="font-semibold text-xs text-white truncate">
+                        {conv.buyerNickname}
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-mono">{conv.lastMessageTime}</span>
+                    </div>
+
+                    <p className="text-[11px] text-slate-400 truncate mb-1">{conv.lastMessage}</p>
+
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-slate-500 truncate max-w-[120px]">
+                        {ownerAcc?.nickname}
+                      </span>
+                      {conv.isAutoReplyActive ? (
+                        <span className="text-emerald-400 font-medium">● 机器人托管</span>
+                      ) : (
+                        <span className="text-amber-400 font-medium">▲ 人工接管中</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
 
@@ -269,15 +329,14 @@ export const ChatWorkbench: React.FC<Props> = ({
                 {/* Simulate Buyer Inbound Message (for testing live chat) */}
                 <button
                   onClick={() => {
-                    const promptText = prompt('模拟该买家向店铺发送新消息：', '请问兑换码发货了吗？');
-                    if (promptText) {
-                      onSimulateBuyerMessage(activeConv.id, promptText);
-                    }
+                    setSimulateInput('在吗？请问兑换码发货了吗？');
+                    setShowSimulateModal(true);
                   }}
-                  className="h-8 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition-colors shrink-0 whitespace-nowrap"
-                  title="模拟买家发消息，测试自动机联动响应"
+                  className="h-8 px-3 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 text-xs font-semibold rounded-lg border border-amber-500/40 transition-colors shrink-0 whitespace-nowrap flex items-center gap-1.5 shadow-sm"
+                  title="模拟买家发消息，测试自动机规则命中与回复"
                 >
-                  模拟买家发言
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>模拟买家发言</span>
                 </button>
               </div>
             </div>
@@ -415,8 +474,26 @@ export const ChatWorkbench: React.FC<Props> = ({
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-slate-500 text-xs">
-            请在左侧选择会话开始沟通
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-3">
+            <div className="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center shadow-lg">
+              <MessageCircle className="w-7 h-7 text-amber-400" />
+            </div>
+            <div className="space-y-1 max-w-sm">
+              <h3 className="font-bold text-sm text-white">暂未打开任何会话窗口</h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                请在左侧选择买家会话；如果您刚刚添加了新账号 A，可点击下方按钮模拟买家 B 向店铺 A 发起进线咨询，立即测试规则自动回复！
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setInboundAccountId(filterAccount !== 'all' ? filterAccount : accounts[0]?.id || '');
+                setShowNewInboundModal(true);
+              }}
+              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20 transition-all active:scale-95"
+            >
+              <Sparkles className="w-4 h-4 fill-current" />
+              <span>模拟买家B进线咨询 (测试A账号)</span>
+            </button>
           </div>
         )}
       </div>
@@ -528,6 +605,225 @@ export const ChatWorkbench: React.FC<Props> = ({
             >
               <span>标记订单已发货 (免运费)</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* In-app Simulator Dialog (replaces browser prompt for reliable iframe execution) */}
+      {showSimulateModal && activeConv && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-md p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <h3 className="font-bold text-sm text-white">模拟买家发送消息</h3>
+              </div>
+              <button
+                onClick={() => setShowSimulateModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 leading-relaxed">
+              向当前买家 <strong className="text-amber-300">【{activeConv.buyerNickname}】</strong> 发送模拟咨询，系统自动回复引擎将检测匹配规则并在 1-2 秒内自动响应：
+            </p>
+
+            <div>
+              <label className="text-[11px] font-semibold text-slate-400 mb-1.5 block">快捷预设测试用例：</label>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  '在吗？怎么发货？',
+                  '请问兑换码发货了吗？',
+                  '加一下微信私聊 vx1892837492',
+                  '发货教程发我一份',
+                  '这个还有货吗？最低多少出？',
+                ].map((preset) => (
+                  <button
+                    key={preset}
+                    onClick={() => setSimulateInput(preset)}
+                    className="text-[11px] px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded border border-slate-700 transition-colors text-left"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-semibold text-slate-400 mb-1 block">模拟买家输入的文本：</label>
+              <textarea
+                value={simulateInput}
+                onChange={(e) => setSimulateInput(e.target.value)}
+                placeholder="输入买家想说的话..."
+                className="w-full h-20 bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-400 resize-none font-sans"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowSimulateModal(false)}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg font-medium transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  if (simulateInput.trim()) {
+                    onSimulateBuyerMessage(activeConv.id, simulateInput.trim());
+                    setShowSimulateModal(false);
+                  }
+                }}
+                disabled={!simulateInput.trim()}
+                className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>立即发送并触发回复</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal for Buyer B Inbound Consultation (New Chat Session for Multi-account) */}
+      {showNewInboundModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <h3 className="font-bold text-sm text-white">模拟买家 B 向店铺进线咨询</h3>
+              </div>
+              <button
+                onClick={() => setShowNewInboundModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 leading-relaxed">
+              测试场景：您使用买家 B 账号向您多账号管理中的店铺账号（如账号 A）发起咨询，系统将生成新的在线聊天窗口，并执行自动回复规则。
+            </p>
+
+            {/* Target Account Selector */}
+            <div>
+              <label className="text-[11px] font-semibold text-slate-400 mb-1 block">
+                接收咨询的店铺账号（卖家）：
+              </label>
+              <select
+                value={inboundAccountId}
+                onChange={(e) => setInboundAccountId(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white focus:outline-hidden focus:border-amber-400"
+              >
+                {accounts.map((acc) => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.nickname} ({acc.accountName}) - {acc.status === 'online' ? '🟢 在线' : '⚪ 离线'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 mb-1 block">
+                  买家 B 昵称：
+                </label>
+                <input
+                  type="text"
+                  value={inboundBuyerName}
+                  onChange={(e) => setInboundBuyerName(e.target.value)}
+                  placeholder="买家昵称"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white focus:outline-hidden focus:border-amber-400"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 mb-1 block">
+                  咨询商品标题：
+                </label>
+                <input
+                  type="text"
+                  value={inboundItemTitle}
+                  onChange={(e) => setInboundItemTitle(e.target.value)}
+                  placeholder="商品标题"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white focus:outline-hidden focus:border-amber-400"
+                />
+              </div>
+            </div>
+
+            {/* Quick Presets */}
+            <div>
+              <label className="text-[11px] font-semibold text-slate-400 mb-1.5 block">
+                买家 B 快捷咨询语（点击填入）：
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  '在吗？请问兑换码怎么发货？',
+                  '拍下了多久能发货？',
+                  '老板这个还有货吗？最低多少能出？',
+                  '加一下微信私聊 vx1892837492',
+                  '发货教程发我一份',
+                ].map((preset) => (
+                  <button
+                    key={preset}
+                    onClick={() => setInboundMessage(preset)}
+                    className="text-[11px] px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded border border-slate-700 transition-colors text-left"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Inbound Message */}
+            <div>
+              <label className="text-[11px] font-semibold text-slate-400 mb-1 block">
+                买家 B 首条咨询消息：
+              </label>
+              <textarea
+                value={inboundMessage}
+                onChange={(e) => setInboundMessage(e.target.value)}
+                rows={2}
+                placeholder="买家第一句话..."
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-400 resize-none font-sans"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowNewInboundModal(false)}
+                className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg font-medium transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  if (onCreateInboundConversation && inboundMessage.trim() && inboundAccountId) {
+                    const newId = onCreateInboundConversation(
+                      inboundAccountId,
+                      inboundBuyerName.trim() || '闲鱼买家B',
+                      inboundMessage.trim(),
+                      {
+                        itemId: 'item_inbound',
+                        itemTitle: inboundItemTitle.trim(),
+                        itemPrice: 88.0,
+                        itemCover:
+                          'https://images.unsplash.com/photo-1612287233207-6b4d32f7e774?w=200&auto=format&fit=crop&q=80',
+                      }
+                    );
+                    setSelectedConvId(newId);
+                    setFilterAccount('all');
+                    setShowNewInboundModal(false);
+                  }
+                }}
+                disabled={!inboundMessage.trim() || !inboundAccountId}
+                className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 shadow-md shadow-amber-500/20"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>立即进线并开启会话</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

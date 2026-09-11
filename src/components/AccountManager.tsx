@@ -25,6 +25,7 @@ interface Props {
   onAddAccount: (account: XianYuAccount) => void;
   onDeleteAccount: (id: string) => void;
   onOpenAddAccount?: () => void;
+  onOpenProduction?: () => void;
 }
 
 export const AccountManager: React.FC<Props> = ({
@@ -33,6 +34,7 @@ export const AccountManager: React.FC<Props> = ({
   onAddAccount,
   onDeleteAccount,
   onOpenAddAccount,
+  onOpenProduction,
 }) => {
   const [showLoginModal, setShowLoginModal] = useState(false);
 
@@ -75,19 +77,52 @@ export const AccountManager: React.FC<Props> = ({
           </p>
         </div>
 
-        <button
-          onClick={() => {
-            if (onOpenAddAccount) {
-              onOpenAddAccount();
-            } else {
-              setShowLoginModal(true);
-            }
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs shadow-md shadow-amber-500/20 transition-all self-start sm:self-auto cursor-pointer active:scale-95"
-        >
-          <Plus className="w-4 h-4" />
-          <span>添加闲鱼账号</span>
-        </button>
+        <div className="flex items-center gap-2.5">
+          {onOpenProduction && (
+            <button
+              onClick={onOpenProduction}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-bold rounded-lg text-xs shadow-md shadow-amber-500/20 transition-all cursor-pointer active:scale-95"
+            >
+              <Zap className="w-4 h-4 fill-current" />
+              <span>生产落地与真实Cookie联调</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => {
+              if (onOpenAddAccount) {
+                onOpenAddAccount();
+              } else {
+                setShowLoginModal(true);
+              }
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-lg text-xs border border-slate-700 transition-all cursor-pointer active:scale-95"
+          >
+            <Plus className="w-4 h-4" />
+            <span>添加闲鱼账号</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Production real test tip banner */}
+      <div className="p-3.5 rounded-xl bg-slate-900/90 border border-amber-500/30 flex items-center justify-between text-xs text-slate-300">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-2.5 w-2.5 relative">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+          </span>
+          <span>
+            <strong>真实生产联调提示：</strong> 若要通过手机闲鱼买家 B 向账号 A 发消息并实际生效，请绑定真实抓取的 Cookie（带 <code>_m_h5_tk</code> 与 <code>cookie2</code>）并启动后台监听线程。
+          </span>
+        </div>
+        {onOpenProduction && (
+          <button
+            onClick={onOpenProduction}
+            className="text-amber-400 hover:underline text-xs font-semibold shrink-0 ml-4"
+          >
+            前往联调 &gt;
+          </button>
+        )}
       </div>
 
       {/* Account Cards Grid */}
