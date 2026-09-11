@@ -49,7 +49,7 @@ const CONFIG = {
       cookie: 'YOUR_XIANYU_COOKIE_HERE',
       enabled: true,
       appKey: '12574478', // 闲鱼默认移动端 AppKey
-      pcAppKey: '34645227', // 闲鱼 PC Web 专有 AppKey
+      pcAppKey: '34839810', // 闲鱼 PC Web 专有 AppKey (最新官方授权)
     },
   ],
 
@@ -209,6 +209,24 @@ async function handleAutoReply(account, buyerNick, buyerUid, buyerText, sessionI
   }, 1500);
 }
 
+function generateDeviceId(userId) {
+  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'.split('');
+  const arr = [];
+  for (let i = 0; i < 36; i++) {
+    if (i === 8 || i === 13 || i === 18 || i === 23) arr[i] = '-';
+    else if (i === 14) arr[i] = '4';
+    else {
+      const r = (16 * Math.random()) | 0;
+      arr[i] = chars[i === 19 ? (r & 3) | 8 : r];
+    }
+  }
+  return arr.join('') + '-' + (userId || 'user');
+}
+
+function generateMid() {
+  return '' + Math.floor(1e3 * Math.random()) + Date.now() + ' 0';
+}
+
 // 初始化 WebSocket 实时私聊通道 (对齐 cv-cat/XianYuApis 逆向还原协议)
 async function initWebSocketChannel(account) {
   if (!WebSocketClient) {
@@ -216,51 +234,142 @@ async function initWebSocketChannel(account) {
     return;
   }
 
-  // 1. 获取 IM Token
+  const cookies = parseCookies(account.cookie);
+  const unb = cookies['unb'] || '';
+  const deviceId = generateDeviceId(unb);
+
+  // 1. 获取 IM Token (完全对齐 cv-cat/XianYuApis)
   const tokenRes = await callMtop(
     'mtop.taobao.idlemessage.pc.login.token',
     '1.0',
-    { deviceId: `node_${Date.now()}`, locale: 'zh-CN', imAppKey: '34645227' },
-    { ...account, appKey: '34645227' }
+    {
+      appKey: '444e9908a51d1cb236a27862abc769c9',
+      deviceId: deviceId,
+    },
+    { ...account, appKey: '34839810' }
   );
 
-  const imToken = tokenRes?.data?.token || tokenRes?.data?.accessToken;
+  const imToken = tokenRes?.data?.accessToken || tokenRes?.data?.token;
   if (!imToken) {
-    console.log(`[${account.name}] 未获取到实时 IM Token，继续使用 HTTP 轮询模式`);
+    console.log(`[${account.name}] 未获取到实时 IM Token (${tokenRes?.ret?.[0] || '鉴权未通过'})，继续使用 HTTP 轮询模式`);
     return;
   }
 
   try {
-    const wsUrl = `wss://idle-im-acs.m.goofish.com/accs/client?appKey=34645227&token=${encodeURIComponent(imToken)}&v=1.0`;
+    const wsUrl = 'wss://wss-goofish.dingtalk.com/';
     const ws = new WebSocketClient(wsUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Host: 'wss-goofish.dingtalk.com',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
         Origin: 'https://www.goofish.com',
         Cookie: account.cookie,
+        Pragma: 'no-cache',
+        'Cache-Control': 'no-cache',
       },
+      handshakeTimeout: 8000,
     });
+
+    let heartbeatTimer = null;
 
     ws.on('open', () => {
       console.log(`[${account.name}] >>> 【双通道接通】WebSocket 实时私聊流已建立 (<200ms延迟) <<<`);
+
+      // 注册报文 /reg
+      const regMsg = {
+        lwp: '/reg',
+        headers: {
+          'cache-header': 'app-key token ua wv',
+          'app-key': '444e9908a51d1cb236a27862abc769c9',
+          'token': imToken,
+          'ua': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) DingTalk(2.1.5) OS(Windows/10) Browser(Chrome/133.0.0.0) IMPaaS DingWeb/2.1.5',
+          'dt': 'j',
+          'wv': 'im:3,au:3,sy:6',
+          'sync': '0,0;0;0;',
+          'did': deviceId,
+          'mid': generateMid(),
+        },
+      };
+      ws.send(JSON.stringify(regMsg));
+
+      // 初始同步确认 /r/SyncStatus/ackDiff
+      const now = Date.now();
+      ws.send(
+        JSON.stringify({
+          lwp: '/r/SyncStatus/ackDiff',
+          headers: { mid: generateMid() },
+          body: [
+            {
+              pipeline: 'sync',
+              tooLong2Tag: 'PNM,1',
+              channel: 'sync',
+              topic: 'sync',
+              highPts: 0,
+              pts: now * 1000,
+              seq: 0,
+              timestamp: now,
+            },
+          ],
+        })
+      );
+
+      // 15秒心跳
+      heartbeatTimer = setInterval(() => {
+        if (ws.readyState === WebSocketClient.OPEN) {
+          ws.send(JSON.stringify({ lwp: '/!', headers: { mid: generateMid() } }));
+        }
+      }, 15000);
     });
 
     ws.on('message', (data) => {
       try {
         const rawStr = data.toString();
-        let parsed = null;
-        try {
-          parsed = JSON.parse(rawStr);
-        } catch {
-          parsed = JSON.parse(Buffer.from(rawStr, 'base64').toString('utf-8'));
+        const message = JSON.parse(rawStr);
+
+        // 回复 ACK
+        if (message.headers?.mid) {
+          const ack = {
+            code: 200,
+            headers: {
+              mid: message.headers.mid,
+              sid: message.headers.sid || '',
+            },
+          };
+          if (message.headers['app-key']) ack.headers['app-key'] = message.headers['app-key'];
+          if (message.headers['ua']) ack.headers['ua'] = message.headers['ua'];
+          if (message.headers['dt']) ack.headers['dt'] = message.headers['dt'];
+          ws.send(JSON.stringify(ack));
         }
 
-        if (parsed && (parsed.content || parsed.text || parsed.data?.text)) {
-          const text = (parsed.content || parsed.text || parsed.data?.text).trim();
-          const buyerUid = String(parsed.senderId || parsed.fromUid || 'unknown');
-          const buyerNick = parsed.senderNick || '闲鱼买家';
-          const sessionId = parsed.sessionId || `session_${buyerUid}`;
-          const msgId = `ws_${parsed.msgId || Date.now()}`;
+        // 解析消息体
+        let payload = null;
+        try {
+          const syncData = message.body?.syncPushPackage?.data?.[0]?.data;
+          if (syncData) {
+            try {
+              payload = JSON.parse(syncData);
+            } catch {
+              payload = JSON.parse(Buffer.from(syncData, 'base64').toString('utf-8'));
+            }
+          }
+        } catch {}
 
+        let text = '';
+        let buyerUid = 'unknown';
+        let buyerNick = '闲鱼买家';
+        let sessionId = '';
+
+        if (payload) {
+          const reminder = payload['1']?.['10'] || payload.reminder || payload;
+          text = (reminder?.reminderContent || reminder?.text || reminder?.content || '').trim();
+          buyerNick = reminder?.reminderTitle || reminder?.nick || '闲鱼买家';
+          buyerUid = String(reminder?.senderUserId || reminder?.fromUid || 'unknown');
+          const rawCid = payload['1']?.['2'] || reminder?.cid || '';
+          sessionId = rawCid ? rawCid.split('@')[0] : `session_${buyerUid}`;
+        }
+
+        if (text && buyerUid !== unb) {
+          const msgId = `ws_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
           if (processedMsgMap.has(msgId)) return;
           processedMsgMap.set(msgId, Date.now());
 
@@ -271,12 +380,13 @@ async function initWebSocketChannel(account) {
     });
 
     ws.on('close', () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       console.log(`[${account.name}] WebSocket 断开，10秒后尝试重连，当前由 HTTP 通道持续守护`);
       setTimeout(() => initWebSocketChannel(account), 10000);
     });
 
     ws.on('error', (err) => {
-      // 保持静默重连，不打断主程序
+      // 保持静默重连
     });
   } catch (err) {
     console.warn(`[${account.name}] WebSocket 初始化跳过:`, err.message);

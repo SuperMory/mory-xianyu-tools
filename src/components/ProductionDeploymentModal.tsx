@@ -159,7 +159,10 @@ export const ProductionDeploymentModal: React.FC<Props> = ({
       const res = await fetch('/api/production/fetch-im-token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId: selectedAccId }),
+        body: JSON.stringify({
+          accountId: selectedAccId,
+          cookie: inputCookie.trim(),
+        }),
       });
       const data = await res.json();
       setImTokenData(data);
@@ -178,18 +181,11 @@ export const ProductionDeploymentModal: React.FC<Props> = ({
  * 闲鱼 24 小时无人值守独立守护进程 (基于 cv-cat/XianYuApis 开源逆向架构对标)
  * =========================================================================
  * 核心技术对齐:
- *   1. 官方私有网关: h5api.m.goofish.com (替代易风控的通用 taobao 网关)
- *   2. 双通道架构: WebSocket 实时私聊流 (<200ms) + Mtop HTTP 3.5s 心跳容灾
- *   3. 自动重签续期: 捕获 Set-Cookie 动态刷新 _m_h5_tk 令牌，无需人工重新抓取
- *   4. PC Web 专有鉴权: mtop.taobao.idlemessage.pc.login.token (AppKey: 34645227)
- * 
- * 部署步骤:
- *   1. 环境准备: Node.js 18+ (推荐 Node 20 / 22，自带原生 WebSocket)
- *   2. 保存脚本: 保存为 xianyu-bot.mjs
- *   3. 安装可选依赖: npm init -y && npm install ws
- *   4. 启动常驻运行: pm2 start xianyu-bot.mjs --name xianyu-bot && pm2 logs
+ *   1. 专属网关: h5api.m.goofish.com / h5api.m.taobao.com (AppKey: 34839810)
+ *   2. 双通道架构: WebSocket 实时私聊 (wss://wss-goofish.dingtalk.com/) + HTTP 容灾
+ *   3. 阿里钉钉 IM PaaS 报文: /reg 鉴权注册 (AppKey: 444e9908a51d1cb236a27862abc769c9) + 15s 心跳
+ * =========================================================================
  */
-
 import crypto from 'crypto';
 import { WebSocket } from 'ws';
 
@@ -197,19 +193,16 @@ const CONFIG = {
   accounts: [
     {
       id: 'acc_01',
-      name: '店铺A-主店',
-      cookie: 'YOUR_ACTUAL_XIANYU_COOKIE_HERE', // 必须包含 _m_h5_tk 与 cookie2
-      appKey: '12574478',
-      pcAppKey: '34645227',
-      enabled: true,
+      name: '我的闲鱼主店',
+      cookie: 'YOUR_ACTUAL_XIANYU_COOKIE_HERE', // 包含 _m_h5_tk, cookie2, unb
+      appKey: '34839810'
     }
   ],
   pollIntervalMs: 3500,
   rules: [
-    { keywords: ['在吗', '发货', '怎么发', '兑换码'], reply: '亲在的！本店支持全自动发货，拍下后兑换码秒发到本聊天窗口~' },
-    { keywords: ['最低', '少点', '少钱', '砍价'], reply: '亲，价格已经是全网极低底价了，薄利多销不接刀哦！' },
-    { keywords: ['微信', 'vx', '手机号', '电话'], reply: '平台禁止导流，所有交易请在闲鱼内完成，安全有保障。' },
-    { isDefault: true, reply: '您好！掌柜正在为您处理订单，稍后人工会及时为您跟进！' }
+    { keywords: ['在吗', '发货', '兑换码'], reply: '亲在的！本店自动发货，拍下后兑换码秒发到本窗口~' },
+    { keywords: ['微信', '电话', '私聊'], reply: '平台禁止导流，所有交易请在闲鱼内完成，安全有保障。' },
+    { isDefault: true, reply: '您好！掌柜正在为您处理订单，稍后人工会及时跟进！' }
   ]
 };
 
@@ -223,60 +216,102 @@ function parseCookies(cookieStr) {
   return result;
 }
 
+function generateDeviceId(userId) {
+  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'.split('');
+  const arr = [];
+  for (let i = 0; i < 36; i++) {
+    if (i === 8 || i === 13 || i === 18 || i === 23) arr[i] = '-';
+    else if (i === 14) arr[i] = '4';
+    else {
+      const r = (16 * Math.random()) | 0;
+      arr[i] = chars[i === 19 ? (r & 3) | 8 : r];
+    }
+  }
+  return arr.join('') + '-' + (userId || 'user');
+}
+
+function generateMid() {
+  return '' + Math.floor(1e3 * Math.random()) + Date.now() + ' 0';
+}
+
 function generateSign(token, t, appKey, dataStr) {
   const cleanToken = token ? token.split('_')[0] : '';
   return crypto.createHash('md5').update(\`\${cleanToken}&\${t}&\${appKey}&\${dataStr}\`).digest('hex');
 }
 
-async function callMtop(api, v, data, acc, appKey = '12574478', retry = 0) {
+async function callMtop(api, v, data, acc, appKey = '34839810') {
   const t = Date.now();
   const dataStr = JSON.stringify(data);
   const cookies = parseCookies(acc.cookie);
   const token = cookies['_m_h5_tk'] || '';
   const sign = generateSign(token, t, appKey, dataStr);
 
-  const domain = retry > 0 ? 'https://h5api.m.taobao.com' : 'https://h5api.m.goofish.com';
-  const url = \`\${domain}/h5/\${api}/\${v}/?jsv=2.7.2&appKey=\${appKey}&t=\${t}&sign=\${sign}&api=\${api}&v=\${v}&type=json\`;
-
+  const url = \`https://h5api.m.taobao.com/h5/\${api}/\${v}/?jsv=2.7.2&appKey=\${appKey}&t=\${t}&sign=\${sign}&api=\${api}&v=\${v}&type=originaljson&accountSite=xianyu&dataType=json\`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) Mobile/15E148 AliApp(TB/10.27.10)',
-      'Referer': 'https://market.m.taobao.com/app/idleFish-F2e/widle-message/message-list.html',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Origin': 'https://www.goofish.com',
+      'Referer': 'https://www.goofish.com/',
       'Content-Type': 'application/x-www-form-urlencoded',
-      'Cookie': acc.cookie
+      Cookie: acc.cookie
     },
     body: new URLSearchParams({ data: dataStr }).toString()
   });
-
-  // Token 自动续期
-  const setCookie = res.headers.get('set-cookie');
-  if (setCookie && setCookie.includes('_m_h5_tk=')) {
-    const m = setCookie.match(/_m_h5_tk=([^;]+)/);
-    if (m) cookies['_m_h5_tk'] = m[1];
-    acc.cookie = Object.entries(cookies).map(([k, v]) => \`\${k}=\${v}\`).join('; ');
-  }
-
-  const json = await res.json().catch(() => null);
-  if (json?.ret?.[0]?.includes('FAIL_SYS_TOKEN_EXOIRED') && retry === 0) {
-    console.log(\`[\${acc.name}] Token 过期，自动使用 Set-Cookie 续签并重试...\`);
-    return await callMtop(api, v, data, acc, appKey, 1);
-  }
-  return json;
+  return await res.json().catch(() => null);
 }
 
 // 启动双通道
 for (const acc of CONFIG.accounts) {
-  // 1. 获取 IM Token 并建立 WebSocket
-  callMtop('mtop.taobao.idlemessage.pc.login.token', '1.0', { deviceId: 'bot_' + Date.now(), imAppKey: '34645227' }, acc, '34645227')
+  const cookies = parseCookies(acc.cookie);
+  const unb = cookies['unb'] || '';
+  const deviceId = generateDeviceId(unb);
+
+  // 1. 获取 IM Token 并建立 WebSocket (完全对齐 cv-cat/XianYuApis)
+  callMtop('mtop.taobao.idlemessage.pc.login.token', '1.0', {
+    appKey: '444e9908a51d1cb236a27862abc769c9',
+    deviceId: deviceId
+  }, acc, '34839810')
     .then(res => {
-      const imToken = res?.data?.token;
+      const imToken = res?.data?.accessToken || res?.data?.token;
       if (imToken) {
-        const ws = new WebSocket(\`wss://idle-im-acs.m.goofish.com/accs/client?appKey=34645227&token=\${encodeURIComponent(imToken)}&v=1.0\`, {
-          headers: { Cookie: acc.cookie, Origin: 'https://www.goofish.com' }
+        const ws = new WebSocket('wss://wss-goofish.dingtalk.com/', {
+          headers: {
+            Host: 'wss-goofish.dingtalk.com',
+            Origin: 'https://www.goofish.com',
+            Cookie: acc.cookie,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
         });
-        ws.on('open', () => console.log(\`[\${acc.name}] WebSocket 实时通道就绪 (<200ms)\`));
-        ws.on('message', data => console.log(\`[\${acc.name}] WS 收到实时推送:\`, data.toString().slice(0, 80)));
+        ws.on('open', () => {
+          console.log(\`[\${acc.name}] WebSocket 实时通道就绪 (<200ms)\`);
+          // 发送 /reg 注册报文
+          ws.send(JSON.stringify({
+            lwp: '/reg',
+            headers: {
+              'cache-header': 'app-key token ua wv',
+              'app-key': '444e9908a51d1cb236a27862abc769c9',
+              'token': imToken,
+              'did': deviceId,
+              'mid': generateMid()
+            }
+          }));
+          // 15秒心跳保活
+          setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ lwp: '/!', headers: { mid: generateMid() } }));
+            }
+          }, 15000);
+        });
+        ws.on('message', data => {
+          try {
+            const msg = JSON.parse(data.toString());
+            if (msg.headers?.mid) {
+              ws.send(JSON.stringify({ code: 200, headers: { mid: msg.headers.mid, sid: msg.headers.sid || '' } }));
+            }
+          } catch {}
+          console.log(\`[\${acc.name}] WS 收到实时推送:\`, data.toString().slice(0, 80));
+        });
       }
     });
 
@@ -312,6 +347,7 @@ for (const acc of CONFIG.accounts) {
 import time
 import json
 import hashlib
+import random
 import requests
 
 CONFIG = {
@@ -319,8 +355,7 @@ CONFIG = {
         {
             "name": "闲鱼主店A",
             "cookie": "YOUR_ACTUAL_XIANYU_COOKIE_HERE", # 包含 _m_h5_tk, cookie2, unb
-            "app_key": "12574478",
-            "pc_app_key": "34645227"
+            "app_key": "34839810",
         }
     ],
     "poll_interval": 3.5,
@@ -330,6 +365,19 @@ CONFIG = {
         {"is_default": True, "reply": "您好！掌柜正在为您处理订单，稍后人工会及时跟进！"}
     ]
 }
+
+def generate_device_id(user_id: str) -> str:
+    chars = list("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+    en = []
+    for i in range(36):
+        if i in (8, 13, 18, 23):
+            en.append("-")
+        elif i == 14:
+            en.append("4")
+        else:
+            r = int(16 * random.random())
+            en.append(chars[(r & 3) | 8 if i == 19 else r])
+    return "".join(en) + "-" + user_id
 
 def generate_sign(token: str, t: int, app_key: str, data_str: str) -> str:
     clean_token = token.split('_')[0] if token else ''
@@ -344,19 +392,19 @@ def parse_cookie_map(cookie_str: str) -> dict:
             cookies[k] = v
     return cookies
 
-def call_mtop(api: str, v: str, data: dict, cookie: str, app_key="12574478", retry=0) -> dict:
+def call_mtop(api: str, v: str, data: dict, cookie: str, app_key="34839810") -> dict:
     t = int(time.time() * 1000)
     data_str = json.dumps(data, separators=(',', ':'))
     c_map = parse_cookie_map(cookie)
     token = c_map.get('_m_h5_tk', '')
     sign = generate_sign(token, t, app_key, data_str)
 
-    domain = "https://h5api.m.goofish.com" if retry == 0 else "https://h5api.m.taobao.com"
-    url = f"{domain}/h5/{api}/{v}/"
-    params = {"jsv": "2.7.2", "appKey": app_key, "t": str(t), "sign": sign, "api": api, "v": v, "type": "json"}
+    url = f"https://h5api.m.taobao.com/h5/{api}/{v}/"
+    params = {"jsv": "2.7.2", "appKey": app_key, "t": str(t), "sign": sign, "api": api, "v": v, "type": "originaljson", "accountSite": "xianyu", "dataType": "json"}
     headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) Mobile/15E148 AliApp(TB/10.27.10)",
-        "Referer": "https://market.m.taobao.com/app/idleFish-F2e/widle-message/message-list.html",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Origin": "https://www.goofish.com",
+        "Referer": "https://www.goofish.com/",
         "Content-Type": "application/x-www-form-urlencoded",
         "Cookie": cookie
     }
@@ -366,9 +414,12 @@ def call_mtop(api: str, v: str, data: dict, cookie: str, app_key="12574478", ret
 
 def get_im_token(cookie: str) -> str:
     \"\"\"对齐 cv-cat/XianYuApis: 获取 WebSocket 鉴权令牌\"\"\"
-    data = {"deviceId": f"py_{int(time.time())}", "locale": "zh-CN", "imAppKey": "34645227"}
-    res = call_mtop("mtop.taobao.idlemessage.pc.login.token", "1.0", data, cookie, app_key="34645227")
-    return res.get("data", {}).get("token", "")
+    c_map = parse_cookie_map(cookie)
+    unb = c_map.get("unb", "")
+    dev_id = generate_device_id(unb)
+    data = {"appKey": "444e9908a51d1cb236a27862abc769c9", "deviceId": dev_id}
+    res = call_mtop("mtop.taobao.idlemessage.pc.login.token", "1.0", data, cookie, app_key="34839810")
+    return res.get("data", {}).get("accessToken") or res.get("data", {}).get("token", "")
 
 print(">>> [XianYuApis] 闲鱼双通道守护程序 (Python版) 启动中...")
 for acc in CONFIG["accounts"]:
@@ -561,6 +612,11 @@ while True:
                       )}
                     </div>
                     <div>{verifyResult.message || verifyResult.error}</div>
+                    {verifyResult.raw?.ret?.[0] && !verifyResult.success && (
+                      <div className="mt-1.5 text-[11px] text-slate-400 font-mono bg-black/30 px-2 py-1 rounded">
+                        底层响应码: {verifyResult.raw.ret[0]}
+                      </div>
+                    )}
                     {verifyResult.accountInfo && (
                       <div className="mt-2 text-[11px] text-slate-300 font-mono bg-black/40 p-2 rounded">
                         <div>已关联掌柜: {verifyResult.accountInfo.nickname}</div>
@@ -680,7 +736,7 @@ while True:
                       <span>实时调用官方接口换取 WebSocket 鉴权令牌 (IM Token)</span>
                     </h3>
                     <p className="text-[11px] text-slate-400">
-                      接口 API: <code>mtop.taobao.idlemessage.pc.login.token/1.0/</code> (PC 专有 AppKey: <code>34645227</code>)
+                      接口 API: <code>mtop.taobao.idlemessage.pc.login.token/1.0/</code> (PC 专有 AppKey: <code>34839810</code>)
                     </p>
                   </div>
                   <button
@@ -761,13 +817,13 @@ while True:
                       <tr>
                         <td className="py-2 px-2.5 font-sans font-medium text-white">IM 登录令牌</td>
                         <td className="py-2 px-2.5 text-amber-300">mtop.taobao.idlemessage.pc.login.token</td>
-                        <td className="py-2 px-2.5 text-slate-400">v1.0 / AppKey: 34645227</td>
+                        <td className="py-2 px-2.5 text-slate-400">v1.0 / AppKey: 34839810</td>
                         <td className="py-2 px-2.5 font-sans"><span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">已部署</span></td>
                       </tr>
                       <tr>
                         <td className="py-2 px-2.5 font-sans font-medium text-white">WebSocket 实时私聊</td>
-                        <td className="py-2 px-2.5 text-amber-300">idle-im-acs.m.goofish.com/accs/client</td>
-                        <td className="py-2 px-2.5 text-slate-400">wss / token 握手接入</td>
+                        <td className="py-2 px-2.5 text-amber-300">wss://wss-goofish.dingtalk.com/</td>
+                        <td className="py-2 px-2.5 text-slate-400">钉钉 PaaS / /reg 注册握手</td>
                         <td className="py-2 px-2.5 font-sans"><span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">已部署</span></td>
                       </tr>
                       <tr>
