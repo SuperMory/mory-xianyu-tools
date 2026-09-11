@@ -970,7 +970,15 @@ for (const acc of CONFIG.ACCOUNTS) {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Production Server] running on http://0.0.0.0:${PORT}`);
+    console.log(`
+  \x1b[36m⚡ [魔力咸鱼助手] 全栈服务已成功启动！\x1b[0m
+  ➜  \x1b[1mLocal\x1b[0m:   \x1b[36mhttp://localhost:${PORT}/\x1b[0m
+  ➜  \x1b[1mNetwork\x1b[0m: \x1b[36mhttp://127.0.0.1:${PORT}/\x1b[0m
+  ➜  \x1b[1mAPI\x1b[0m:     \x1b[36mhttp://localhost:${PORT}/api/health\x1b[0m
+
+  \x1b[33m💡 Windows 用户提示：\x1b[0m请在浏览器打开 \x1b[32mhttp://localhost:${PORT}\x1b[0m 访问前端页面
+  (切勿在浏览器直接访问 http://0.0.0.0:3000，Windows 会提示拒绝连接，必须使用 localhost 或 127.0.0.1)
+    `);
   });
 }
 
