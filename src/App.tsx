@@ -31,6 +31,7 @@ import { ChatWorkbench } from './components/ChatWorkbench';
 import { RiskControlCenter } from './components/RiskControlCenter';
 import { TechnicalSpecsModal } from './components/TechnicalSpecsModal';
 import { ElectronPackagerModal } from './components/ElectronPackagerModal';
+import { AddAccountModal } from './components/AddAccountModal';
 
 export default function App() {
   // Navigation State
@@ -90,6 +91,7 @@ export default function App() {
   // Modals
   const [showSpecsModal, setShowSpecsModal] = useState<boolean>(false);
   const [showPackagerModal, setShowPackagerModal] = useState<boolean>(false);
+  const [showAddAccountModal, setShowAddAccountModal] = useState<boolean>(false);
 
   // Save to localStorage
   useEffect(() => {
@@ -402,6 +404,7 @@ export default function App() {
         onToggleDesktopNotifications={() => setDesktopNotifications(!desktopNotifications)}
         onOpenSpecs={() => setShowSpecsModal(true)}
         onOpenPackager={() => setShowPackagerModal(true)}
+        onOpenAddAccount={() => setShowAddAccountModal(true)}
       />
 
       {/* 2. Main Body: Sidebar + Dynamic Workspace */}
@@ -428,6 +431,7 @@ export default function App() {
               onNavigate={(tab) => setActiveTab(tab)}
               onOpenSpecs={() => setShowSpecsModal(true)}
               onOpenPackager={() => setShowPackagerModal(true)}
+              onOpenAddAccount={() => setShowAddAccountModal(true)}
             />
           )}
 
@@ -437,6 +441,7 @@ export default function App() {
               onUpdateAccount={handleUpdateAccount}
               onAddAccount={handleAddAccount}
               onDeleteAccount={handleDeleteAccount}
+              onOpenAddAccount={() => setShowAddAccountModal(true)}
             />
           )}
 
@@ -500,6 +505,15 @@ export default function App() {
       <ElectronPackagerModal
         isOpen={showPackagerModal}
         onClose={() => setShowPackagerModal(false)}
+      />
+
+      <AddAccountModal
+        isOpen={showAddAccountModal}
+        onClose={() => setShowAddAccountModal(false)}
+        onAddAccount={(newAcc) => {
+          handleAddAccount(newAcc);
+          setActiveAccountId(newAcc.id);
+        }}
       />
     </div>
   );

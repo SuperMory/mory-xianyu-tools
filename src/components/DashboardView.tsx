@@ -11,6 +11,7 @@ import {
   ArrowUpRight,
   Sparkles,
   Zap,
+  Plus,
 } from 'lucide-react';
 import { XianYuAccount, DeliveryRecord, RiskLog, AutoReplyRule } from '../types';
 
@@ -22,6 +23,7 @@ interface Props {
   onNavigate: (tab: any) => void;
   onOpenSpecs: () => void;
   onOpenPackager: () => void;
+  onOpenAddAccount?: () => void;
 }
 
 export const DashboardView: React.FC<Props> = ({
@@ -32,6 +34,7 @@ export const DashboardView: React.FC<Props> = ({
   onNavigate,
   onOpenSpecs,
   onOpenPackager,
+  onOpenAddAccount,
 }) => {
   const totalTodayReplies = accounts.reduce((acc, a) => acc + a.todayReplies, 0);
   const totalTodayDeliveries = accounts.reduce((acc, a) => acc + a.todayDeliveries, 0);
@@ -161,17 +164,28 @@ export const DashboardView: React.FC<Props> = ({
         {/* Left 2 Cols: Accounts Status Overview */}
         <div className="lg:col-span-2 space-y-4">
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <h2 className="font-bold text-white text-sm flex items-center gap-2">
                 <Users className="w-4 h-4 text-amber-400" />
-                多店铺实时运行状态与 Cookie 续期
+                <span>多店铺实时运行状态与 Cookie 续期</span>
               </h2>
-              <button
-                onClick={() => onNavigate('accounts')}
-                className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1"
-              >
-                账号管理中心 <ArrowUpRight className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {onOpenAddAccount && (
+                  <button
+                    onClick={onOpenAddAccount}
+                    className="h-7 px-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-1.5 transition-all shadow-xs active:scale-95"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>添加闲鱼账号</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => onNavigate('accounts')}
+                  className="h-7 px-2.5 text-xs text-amber-400 hover:text-amber-300 hover:bg-slate-800 rounded-lg flex items-center gap-1 transition-colors"
+                >
+                  <span>管理中心</span> <ArrowUpRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3">

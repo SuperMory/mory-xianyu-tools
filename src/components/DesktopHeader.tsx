@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Sliders,
   Radio,
+  Plus,
 } from 'lucide-react';
 import { XianYuAccount } from '../types';
 
@@ -22,6 +23,7 @@ interface Props {
   onToggleDesktopNotifications: () => void;
   onOpenSpecs: () => void;
   onOpenPackager: () => void;
+  onOpenAddAccount?: () => void;
 }
 
 export const DesktopHeader: React.FC<Props> = ({
@@ -34,6 +36,7 @@ export const DesktopHeader: React.FC<Props> = ({
   onToggleDesktopNotifications,
   onOpenSpecs,
   onOpenPackager,
+  onOpenAddAccount,
 }) => {
   const activeAccount = accounts.find((a) => a.id === activeAccountId) || accounts[0];
 
@@ -79,6 +82,18 @@ export const DesktopHeader: React.FC<Props> = ({
             ))}
           </select>
         </div>
+
+        {/* Quick Add Account Button */}
+        {onOpenAddAccount && (
+          <button
+            onClick={onOpenAddAccount}
+            className="h-7 px-2.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0 shadow-2xs whitespace-nowrap"
+            title="扫码添加或接入新闲鱼账号"
+          >
+            <Plus className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline">添加账号</span>
+          </button>
+        )}
 
         {/* Global Bot Toggle */}
         <button
