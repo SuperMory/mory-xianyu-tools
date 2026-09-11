@@ -1,0 +1,6 @@
+{
+  "name": "魔力咸鱼助手",
+  "description": "专业闲鱼多账号自动化管理系统，支持多账号登录与Cookie维护、关键词智能过滤自动回复、虚拟商品/卡密自动发货、在线聊天工作台与风控拦截管理。",
+  "requestFramePermissions": ["notifications"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
